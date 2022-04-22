@@ -1,0 +1,133 @@
+---
+title: "Vector Autoregression Modeling"
+author: "Robert Poole"
+date: '22 April 2022'
+output: 
+  html_document:
+    df_print: paged
+    code_folding: "hide"
+    toc: yes
+    fig _caption: no
+    theme: cerulean
+    toc_float: no
+---
+
+```{r setup, include = FALSE}
+rm(list = ls())
+graphics.off()
+knitr::opts_chunk$set(echo = TRUE,
+                      message = FALSE,
+                      warning = FALSE)
+```
+
+```{r loadPackages, message=FALSE}
+require(fpp3)
+require(tidyverse)
+require(dplyr)
+require(tidyquant)
+require(lubridate)
+require(timetk)
+require(vars)
+require(lmtest)
+require(kableExtra)
+```
+
+# Executive Summary 
+This white paper seeks to examine the causality between the unemployment rate and the total vehicle sales. Intuitively, one would assume that the unemployment rate is the leading variable. Upon further analysis, these assumptions were incorrect. There is a two-way relationship between unemployment rate and total vehicle sales. 
+
+# Introduction
+Since the inception of a first world US economy, there have been constant shifts within the economic landscape. As a result of continuous change, it remains impossible to perfectly predict a majority of parameters. However, innovative strategies have been implemented in order to negate unpredictability and promote stability. While there are limitless number of economic factors to consider, this paper will look to analyze the relationship between the unemployment rate (UNRATE) and total vehicle sales (TOTALSA). Vector Autoregression (VAR) modeling is widely known as the pinnacle when discussing variable interaction and causality. The VAR model is used to capture the relationship between multiple quantities as they change over time. Therefore, I will use the VAR model to observe the relationship between the unemployment rate and total vehicle sales. 
+
+# Variable Introduction and Relationship Expectation 
+For this model, I will utilize and compare data from January 1980 until March 2022. The unemployment rate is measured in percentage and total vehicle sales is measured in millions of units. I anticipate these variables to have a dynamic relationship with one other, with unemployment rate as the leading variable. Being open-minded with expectations is key, as it is only one component of the analysis. My inferences should only be used as logic to enhance the interpretation of results. That in mind, it is interesting to inquire about the effect unemployment rate will have on total vehicle sales. Economic theory would wager that a shock to unemployment would decrease total vehicle sales. This is because vehicles, more specifically vehicle sales, are seen as a normal goods within the economic field. Essentially, this means that a decrease in consumer income would result in a decrease of total vehicle sales. It is safe to assume that an increase in unemployment would lead to a decrease income, ultimately decreasing the total vehicle sales. My VAR model creates this scenario by shocking unemployment rate, causing it to increase substantially (one standard deviation). Therefore, this should in theory, decrease total vehicle sales. At a glance, the raw data would suggest that these assumptions hold true. Looking at the plotted data, it appears that as the unemployment rate increases the total vehicle sales decrease. 
+
+
+```{r downloadData}
+varList <- c("UNRATE", "TOTALSA")
+MyData <- tq_get(varList, get = "economic.data", from = "1980-01-01") %>%
+  mutate(Month = yearmonth(date)) %>% dplyr::select(-date) %>%
+  as_tsibble(index = Month, key = symbol)
+MD2 <- MyData %>%
+  pivot_wider(names_from = symbol, values_from = price) %>%
+  as_tsibble()
+
+```
+
+```{r plotdata2}
+MyData %>%
+  ggplot(aes(x = Month, y = price)) +
+  geom_line() +
+  facet_wrap(vars(symbol), scales = "free_y", ncol = 1) +
+  labs(y = " ")
+```
+
+# Data Manipulation
+After gathering and plotting the raw data, it is crucial to check the variables for unit roots. This is an important element because it determines whether or not my variables are stationary. A stationary time series has statistical properties or moments (mean and variance) that do not vary in time. Stationarity, then, is the status of a stationary time series. Conversely, nonstationarity is the status of a time series whose statistical properties are changing through time. The chart below confirms that each variable does carry a unit root, meaning the data in nonstationary. To compensate for this, I will difference the data which will take the mean and variance from the present month and subtract is from the previous month, subsequently making the data stationary. 
+
+```{r unitRoots}
+MyData %>% 
+  features(price, unitroot_ndiffs) %>% 
+  kable(format = "html", table.attr = "style='width:30%;' ") %>% 
+  kableExtra::kable_styling()
+```
+
+
+```{r difference, include = FALSE}
+Z <- MD2 %>%
+  mutate(gUNRATE = 100 * difference(log(UNRATE)),
+         gTOTALSA = 100 * difference(log(TOTALSA))) %>%
+  dplyr::select(gUNRATE, gTOTALSA) %>% 
+  tidyr::drop_na()
+Z <- as.ts(Z, start = c(1960, 2), frequency = 12)
+```
+
+
+```{r lags, include = FALSE}
+zh <- Z[,c(2,1)]
+tmp <- VARselect(zh,lag.max=3,type="const")
+tmp
+```
+
+```{r selection, include = FALSE}
+p <- tmp$selection[2]
+```
+
+```{r estimation, include = FALSE}
+var.TVS <- VAR(zh,p=p,type="const")
+summary(var.TVS)
+```
+
+# Granger Causality
+The Granger causality test is a statistical hypothesis test for determining whether one variable is useful in forecasting another. In my first test, I will check to see if previous total vehicle sales will effect the unemployment rate. The important category to observe is the "Pr(>f)" metric. The Granger test displays an output of about .03, or around 3%. This is indicative of unemployment rate having a significant effect on total vehicle sales. This is consistent with my predictions. Inversely, the total vehicle sales has surprising effects on the unemployment rate. Under this scenario, the Granger test displays an output of nearly .00, or 0%. This relationship contains a higher significance than when unemployment rate is observed first. This does not align with expectations. 
+
+```{r hyp 1, Include = FALSE}
+cat("H0: gUNRATE does not cause gTOTALSA,  H1: it does \n")
+```
+
+```{r test 1}
+grangertest(gTOTALSA ~ gUNRATE,order=p,data=zh)
+```
+
+```{r hyp 2, Include = FALSE}
+cat("H0: gTOTALSA does not cause gUNRATE,  H1: it does\n")
+```
+
+```{r test 2}
+grangertest(gUNRATE ~ gTOTALSA,order=p,data=zh)
+```
+
+# Orthogonality
+The Orthogonal Impulse Response test is a critical component in measuring the relationship each variable has on one another after one variable is "shocked." As mentioned earlier, a shock occurs when one variable is increased by one standard deviation from its mean and my analysis will be based on how the other variable responds to the original variable being "shocked." The visual created will hopefully relate nicely in conjunction with our Granger test and provide some insight as to why each variable responds the way they do. I will shock the total vehicle sales first, as it was the more significant relationship according to our Granger test. As we can see, when total vehicle sales is shocked, the unemployment decreases. Increasing total vehicle sales could indicate that the population has more money in circulation, in turn, unemployment rate would likely be low. Vice versa, my predictions were that unemployment rate would be the leading variable, meaning that a shock to unemployment would have a more significant impact. While the Granger causality test disagrees, potentially the Orthoginal Impulse Response will correlate with expectations. After shocking (increasing) the unemployment rate, total vehicle sales respond by decreasing slightly but then recovering quickly after the shock ends. This can be explained by consumers having less money to spend, because more are unemployed, therefore, they will spend less on vehicles. Again, this is due to vehicles and vehicle expenditures being normal goods within economic theory. 
+```{r orthog}
+plot(irf(var.TVS, n.ahead = 6, boot = TRUE ))
+```
+
+# FEVD
+Forecast Error Variance Decomposition is another part of structural analysis which "decomposes" the variance of the forecast error into the contributions from the specific exogenous shocks. Intuitively, this is useful because it demonstrates how important a shock is in explaining the variations of unemployment rate and total vehicle sales, and vice versa. In addition, it shows how the importance changes over time. For example, a shock to unemployment rate may not be responsible for variations in the short-run but may cause longer-term fluctuations of total vehicle sales. As we can see here, the variation from total vehicle sales is only caused by total vehicle sales (FEVD for gTOTALSA), not by unemployment rate. inversely, variation in unemployment rate is partially due to total vehicle sales (FEVD for gUNRATE). This shows a lot more of the variance in unemployment rate is due to total vehicle sales than the other way around. Specifically in the short run. 
+
+```{r FEVD}
+plot(fevd(var.TVS, n.ahead = 12))
+```
+
+# Conclusion 
+Upon performing a Vector Autoregression model to analyze the relationship of unemployment rate on total vehicle sales, some of my expectations held true. Unemployment rate is a respectable measure when looking to examine the effect on total vehicle sales. I found that a shock to unemployment rate does cause a decrease in total vehicle sales, but not nearly to the degree hypothesized. Conversely, a shock to total vehicle sales had unexpected effects on the the unemployment rate. This was surprising because intuitively I envisioned unemployment rate being the leading variable. 
