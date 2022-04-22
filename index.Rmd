@@ -12,6 +12,8 @@ output:
     toc_float: no
 ---
 
+GitHub link: https://rep17.github.io/
+
 ```{r setup, include = FALSE}
 rm(list = ls())
 graphics.off()
